@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="theme-color" content="#0d0f12" />
-<title>Apartment</title>
+<title>WindMil</title>
 <style>
   :root{
     --ink:#e9e6df; --dim:#8d8880; --bg:#0d0f12;
@@ -216,10 +216,16 @@
 
 
   /* ---------- on screen key readout ---------- */
-  #keyhud{position:fixed;right:calc(18px + var(--padR));bottom:calc(18px + var(--padB));
+  .keyhud{position:fixed;bottom:calc(18px + var(--padB));
     z-index:8;display:none;flex-direction:column;align-items:center;gap:5px;
     pointer-events:none;-webkit-user-select:none;user-select:none}
-  body:not(.touch):not(.inxr):not(.intro) #keyhud{display:flex}
+  /* Only the set in use is on screen. WASD is the one showing from the start. */
+  body:not(.touch):not(.inxr):not(.intro) .keyhud.show{display:flex}
+  /* WASD sits bottom left, and steps clear of the settings panel while it is open. */
+  #keyhudW{left:calc(18px + var(--padL));gap:7px;transition:left .22s ease}
+  #panel:not(.away) ~ #keyhudW{left:calc(min(318px, 86vw) + 18px + var(--padL))}
+  #keyhudW .kRow{gap:7px}
+  #keyhudA{right:calc(18px + var(--padR))}
   .kRow{display:flex;gap:5px}
   .k{width:34px;height:34px;border-radius:8px;
     background:rgba(13,15,18,.55);border:1px solid rgba(233,230,223,.26);
@@ -227,6 +233,7 @@
     display:flex;align-items:center;justify-content:center;
     font:600 14px/1 inherit;color:rgba(233,230,223,.78);
     transition:background .07s linear,color .07s linear,border-color .07s linear}
+  #keyhudW .k{width:52px;height:52px;border-radius:11px;font-size:21px}
   .k.on{background:var(--accent);border-color:var(--accent);color:#12140c}
 
   @media (max-width:520px){dt{float:none;width:auto}dd{margin-left:0;margin-bottom:8px}}
@@ -396,9 +403,14 @@
   <button id="fs" class="corner" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
 </div>
 
-<div id="keyhud" aria-hidden="true">
-  <div class="kRow"><span class="k" data-slot="up"></span></div>
-  <div class="kRow"><span class="k" data-slot="left"></span><span class="k" data-slot="down"></span><span class="k" data-slot="right"></span></div>
+<div id="keyhudW" class="keyhud show" aria-hidden="true">
+  <div class="kRow"><span class="k" data-slot="up">W</span></div>
+  <div class="kRow"><span class="k" data-slot="left">A</span><span class="k" data-slot="down">S</span><span class="k" data-slot="right">D</span></div>
+</div>
+
+<div id="keyhudA" class="keyhud" aria-hidden="true">
+  <div class="kRow"><span class="k" data-slot="up">&#8593;</span></div>
+  <div class="kRow"><span class="k" data-slot="left">&#8592;</span><span class="k" data-slot="down">&#8595;</span><span class="k" data-slot="right">&#8594;</span></div>
 </div>
 
 <div id="toast"></div>
@@ -427,7 +439,7 @@ const SCENES = [
   // Start pose taken from the SuperSplat export: camera at 2,2,-2 looking at the
   // origin, which is a yaw of 135. Open with ?tune=1 to fit it, then paste the
   // copied line back over this one.
-  { id: 'korenbloem', name: 'De Korenbloem (Exterior)', url: './splat/lod-meta.json',
+  { id: 'windmil', name: 'WindMil', url: './splat/lod-meta.json',
     scale: 1, height: 0, flip: true, x: 2, y: 2, z: -2, yaw: 135 }
 ];
 
@@ -456,7 +468,7 @@ const cfg = {
   // flight and turn speed set below.
   vrPace:  num('vrpace', 0.5),
 
-  // VR only. The scan holds about 5.2 million splats and the engine's default
+  // VR only. A standalone headset cannot sort and draw the engine's default
   // budget of 1 million is far more than a standalone headset can sort and draw
   // twice a frame, which is what made VR crawl.
   vrDetail: num('vrdetail', 350000),
@@ -774,21 +786,17 @@ function xrInput(dt) {
 }
 
 /* ---------- on screen key readout ----------
-   Sits bottom right on anything with a keyboard. Caps light up as they are held,
-   and the whole set flips to arrow glyphs the moment someone uses the arrows. */
-const keyhud = document.querySelector('#keyhud');
+   Two pads on anything with a keyboard: WASD bottom left, arrows bottom right.
+   Only one is on screen at a time. WASD shows from the start, and the pair swaps
+   the moment someone touches the other set. Caps light up as they are held. */
+const keyhudW = document.querySelector('#keyhudW');
+const keyhudA = document.querySelector('#keyhudA');
 
-const SLOTS = {
-  up:    ['KeyW', 'ArrowUp'],
-  left:  ['KeyA', 'ArrowLeft'],
-  down:  ['KeyS', 'ArrowDown'],
-  right: ['KeyD', 'ArrowRight']
-};
-const GLYPHS = {
-  wasd:   { up: 'W', left: 'A', down: 'S', right: 'D' },
-  arrows: { up: '\u2191', left: '\u2190', down: '\u2193', right: '\u2192' }
-};
-const hudCaps = keyhud.querySelectorAll('.k');
+const WASD_KEYS  = { up: 'KeyW',    left: 'KeyA',      down: 'KeyS',      right: 'KeyD' };
+const ARROW_KEYS = { up: 'ArrowUp', left: 'ArrowLeft', down: 'ArrowDown', right: 'ArrowRight' };
+
+const capsW = keyhudW.querySelectorAll('.k');
+const capsA = keyhudA.querySelectorAll('.k');
 let keyStyle = 'wasd';
 
 function noteKeyStyle(code) {
@@ -797,12 +805,10 @@ function noteKeyStyle(code) {
 }
 
 function paintHud() {
-  const g = GLYPHS[keyStyle];
-  for (const el of hudCaps) {
-    const slot = el.dataset.slot;
-    el.textContent = g[slot];
-    el.classList.toggle('on', SLOTS[slot].some(c => keys.has(c)));
-  }
+  keyhudW.classList.toggle('show', keyStyle === 'wasd');
+  keyhudA.classList.toggle('show', keyStyle === 'arrows');
+  for (const el of capsW) el.classList.toggle('on', keys.has(WASD_KEYS[el.dataset.slot]));
+  for (const el of capsA) el.classList.toggle('on', keys.has(ARROW_KEYS[el.dataset.slot]));
 }
 
 /* ---------- desktop input ---------- */
@@ -1275,7 +1281,7 @@ slider('vrres',    'vrRes',    v => v.toFixed(2));
 function refreshVrPerf() {
   if (inXr()) app.scene.gsplat.splatBudget = Math.max(25000, Math.round(cfg.vrDetail));
   vrPerfNote.textContent =
-    'This scan holds 5.2 million splats. Fewer means a smoother headset. ' +
+    'Fewer splats means a smoother headset. ' +
     'Detail applies straight away in VR, render scale on the next Enter VR.';
 }
 document.querySelector('#vrdetail').addEventListener('input', refreshVrPerf);
